@@ -41,21 +41,29 @@
 
 /* Private variables ---------------------------------------------------------*/
 UART_HandleTypeDef huart2;
+DMA_HandleTypeDef hdma_usart2_rx;
+DMA_HandleTypeDef hdma_usart2_tx;
 
 /* USER CODE BEGIN PV */
 uint8_t RxBuffer[40] ;
 uint8_t TxBuffer[100] ;
 uint8_t Menu [] ="what do you want to do ? \r\npress 0 for : Led Control \r\npress 1 for : Button Status \r\n";
+uint8_t Menu0 [] = "--------LED Control--------\r\npress a for : Speed Up +1Hz\r\npress s for : Speed Down -1Hz\r\npress d for : On/Off\r\npress x for : Back\r\n";
+uint8_t Menu1 [] = "--------Button Status--------\r\npress x for : Back\r\n";
 uint8_t flagMenu = 0 ;
+uint8_t LedStatus = 0 ;
 int delay = 0 ;
+uint32_t Blink = 0;
+uint8_t OnoffLed = 0;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
+static void MX_DMA_Init(void);
 static void MX_USART2_UART_Init(void);
 /* USER CODE BEGIN PFP */
-
+void UARTInterruptConfig();
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -91,6 +99,7 @@ int main(void)
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
+  MX_DMA_Init();
   MX_USART2_UART_Init();
   /* USER CODE BEGIN 2 */
   /* USER CODE END 2 */
@@ -104,16 +113,35 @@ int main(void)
     /* USER CODE BEGIN 3 */
 	  static uint32_t Time ;
 	  UARTInterruptConfig();
-	  if (flagMenu == 0)
-	  {
-		  if(HAL_GetTick() > Time)
+	  if(HAL_GetTick() > Time && flagMenu == 0)
 		  {
-			  Time = HAL_GetTick() + 3000 ;
-			  HAL_UART_Transmit_IT(&huart2, Menu, strlen((char*)Menu));
+		  		Time = HAL_GetTick() + 3000 ;
+		  		HAL_UART_Transmit_DMA(&huart2, Menu, strlen((char*)Menu));
 		  }
+
+	  else if(flagMenu == 2)
+	  	  {
+		  	  LedStatus = HAL_GPIO_ReadPin(B1_GPIO_Port, B1_Pin);
+		  	  sprintf((char*)TxBuffer,"Button status : %d\r\n",LedStatus);
+		  	  HAL_UART_Transmit_DMA(&huart2, TxBuffer, strlen((char*)TxBuffer));
+	  	  }
+	  else if(flagMenu != 0)
+	  	  {
+		  	  Time = HAL_GetTick();
+	  	  }
+	  if(HAL_GetTick() > Blink && OnoffLed == 0)
+	  {
+		  if(delay > 0)
+		  	  {
+		  		  Blink = 500/delay ;
+		  	  }
+		  	  else if(delay <= 0 )
+		  	  {
+		  		  Blink = 0 ;
+		  	  }
+		  Blink = HAL_GetTick() + Blink ;
+		  HAL_GPIO_TogglePin(LD2_GPIO_Port, LD2_Pin);
 	  }
-
-
   }
   /* USER CODE END 3 */
 }
@@ -198,6 +226,25 @@ static void MX_USART2_UART_Init(void)
 }
 
 /**
+  * Enable DMA controller clock
+  */
+static void MX_DMA_Init(void)
+{
+
+  /* DMA controller clock enable */
+  __HAL_RCC_DMA1_CLK_ENABLE();
+
+  /* DMA interrupt init */
+  /* DMA1_Stream5_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA1_Stream5_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(DMA1_Stream5_IRQn);
+  /* DMA1_Stream6_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA1_Stream6_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(DMA1_Stream6_IRQn);
+
+}
+
+/**
   * @brief GPIO Initialization Function
   * @param None
   * @retval None
@@ -233,26 +280,73 @@ static void MX_GPIO_Init(void)
 /* USER CODE BEGIN 4 */
 void UARTInterruptConfig()
 {
-	HAL_UART_Receive_IT(&huart2, RxBuffer, 1);
+	HAL_UART_Receive_DMA(&huart2, RxBuffer, 1);
 }
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 {
 	if(huart == &huart2)
 	{
-		RxBuffer[10] = '\0' ;
+		RxBuffer[1] = '\0' ;
 		//return received data
-		if(RxBuffer[0] == '0')
+		if(RxBuffer[0] == '0' && flagMenu == 0)
 		{
-			sprintf((char*)TxBuffer,"Received : %s\r\n","dummy");
+			sprintf((char*)TxBuffer,"Received %s\r\n",RxBuffer);
+			HAL_UART_Transmit_DMA(&huart2, TxBuffer, strlen((char*)TxBuffer));
+			HAL_UART_Transmit_DMA(&huart2, Menu0, strlen((char*)Menu0));
+			flagMenu = 1 ;
+		}
+		else if(RxBuffer[0] == '1' && flagMenu == 0)
+		{
+			sprintf((char*)TxBuffer,"Received %s\r\n",RxBuffer);
+			HAL_UART_Transmit_DMA(&huart2, TxBuffer, strlen((char*)TxBuffer));
+			HAL_UART_Transmit_DMA(&huart2, Menu1, strlen((char*)Menu1));
+			flagMenu = 2 ;
+		}
+		else if(RxBuffer[0] == 'a' && flagMenu == 1)
+		{
+			sprintf((char*)TxBuffer,"Received %s\r\n",RxBuffer);
+			HAL_UART_Transmit_DMA(&huart2, TxBuffer, strlen((char*)TxBuffer));
+			HAL_UART_Transmit_DMA(&huart2,"Speed Up 1 Hz\r\n",14);
+			delay += 1;
+			sprintf((char*)TxBuffer,"Blink at %d",delay);
+			HAL_UART_Transmit_DMA(&huart2, TxBuffer, strlen((char*)TxBuffer));
+			HAL_UART_Transmit_DMA(&huart2, "Hz\r\n",3);
+			OnoffLed = 0 ;
+		}
+		else if(RxBuffer[0] == 's' && flagMenu == 1)
+		{
+			sprintf((char*)TxBuffer,"Received %s\r\n",RxBuffer);
+			HAL_UART_Transmit_DMA(&huart2, TxBuffer, strlen((char*)TxBuffer));
+			HAL_UART_Transmit_DMA(&huart2,"Speed Down 1 Hz\r\n",16);
+			delay -= 1;
+			if(delay < 0) {delay = 0;}
+			sprintf((char*)TxBuffer,"Blink at %d",delay);
+			HAL_UART_Transmit_DMA(&huart2, TxBuffer, strlen((char*)TxBuffer));
+			HAL_UART_Transmit_DMA(&huart2, "Hz\r\n",3);
+			OnoffLed = 0 ;
+		}
+		else if(RxBuffer[0] == 'd' && flagMenu == 1)
+		{
+			sprintf((char*)TxBuffer,"Received %s\r\n",RxBuffer);
+			HAL_UART_Transmit_DMA(&huart2, TxBuffer, strlen((char*)TxBuffer));
+			HAL_GPIO_TogglePin(LD2_GPIO_Port, LD2_Pin);
+			OnoffLed = 1 ;
+		}
+		else if(RxBuffer[0] == 'x')
+		{
+			sprintf((char*)TxBuffer,"Received %s\r\n",RxBuffer);
+			HAL_UART_Transmit_IT(&huart2, TxBuffer, strlen((char*)TxBuffer));
+			HAL_UART_Transmit_IT(&huart2, "Back To Menu",13 );
+			flagMenu = 0 ;
 		}
 		else
 		{
-			sprintf((char*)TxBuffer,"Sorry %s\r\n","wrong Press");
+			sprintf((char*)TxBuffer,"Received %s\r\n",RxBuffer);
+			HAL_UART_Transmit_DMA(&huart2, TxBuffer, strlen((char*)TxBuffer));
+			HAL_UART_Transmit_DMA(&huart2, "Worng Press\r\n",11);
 		}
-		HAL_UART_Transmit_IT(&huart2, TxBuffer, strlen((char*)TxBuffer));
-
 		//recall received
-		HAL_UART_Receive_IT(&huart2, RxBuffer, 1);
+		//HAL_UART_Receive_IT(&huart2, RxBuffer, 1);
 
 
 	}
